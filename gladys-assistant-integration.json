@@ -1,177 +1,120 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Trafikverket road weather",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Unofficial connector: road weather stations of Trafikverket (Sweden), read only.",
+    "fr": "Connecteur non officiel : stations météo routières de Trafikverket (Suède), en lecture seule."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-trafikverket:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-trafikverket/main/cover.png",
+  "categories": ["environment"],
+  "transports": ["cloud"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": { "en": "Trafikverket in Gladys", "fr": "Trafikverket dans Gladys" },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Unofficial connector, not affiliated with Trafikverket (the Swedish Transport Administration). It reads the road weather stations you choose through the official open API of Trafikverket: air and road surface temperature, dew point, humidity, wind, precipitation, ice, snow and water on the road. You need a free API key of your own (data.trafikverket.se). Read only: nothing is ever sent but the query. Trains, ferries and traffic cameras are not part of this integration. Never tested with a real key yet.",
+        "fr": "Connecteur non officiel, sans lien avec Trafikverket (l'administration suédoise des transports). Il lit les stations météo routières de votre choix par l'API ouverte officielle de Trafikverket : température de l'air et de la route, point de rosée, humidité, vent, précipitations, glace, neige et eau sur la route. Il faut une clé d'API gratuite à votre nom (data.trafikverket.se). Lecture seule : rien d'autre que la requête n'est envoyé. Les trains, les ferries et les caméras routières ne font pas partie de cette intégration. Jamais testé avec une vraie clé pour l'instant."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-trafikverket/blob/main/docs/fr.md",
+          "label": { "en": "Guide (French)", "fr": "Guide (français)" }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-trafikverket/blob/main/docs/en.md",
+          "label": { "en": "Guide (English)", "fr": "Guide (anglais)" }
+        },
+        {
+          "url": "https://data.trafikverket.se/",
+          "label": {
+            "en": "Trafikverket open API (key, station map)",
+            "fr": "API ouverte de Trafikverket (clé, carte des stations)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
+      "key": "api_key",
+      "type": "secret",
+      "label": { "en": "API key", "fr": "Clé d'API" },
       "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+        "en": "Your key of the Trafikverket open API (data.trafikverket.se, free account). Kept by Gladys in its database, never shown again; sent only to Trafikverket (api.trafikinfo.trafikverket.se), in the body of the query, never in a URL nor a log.",
+        "fr": "Votre clé de l'API ouverte de Trafikverket (data.trafikverket.se, compte gratuit). Gardée par Gladys dans sa base, jamais réaffichée ; envoyée seulement à Trafikverket (api.trafikinfo.trafikverket.se), dans le corps de la requête, jamais dans une URL ni un journal."
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "required": false
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
+      "key": "stations_section",
+      "type": "section",
+      "label": { "en": "Road weather stations", "fr": "Stations météo routières" },
       "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
-      },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+        "en": "Up to five stations: the name exactly as Trafikverket writes it on its map (\"Kungälv\"), or the id of the station (it starts with \"SE_STA_VVIS\"). A name shared by several stations is refused: the status then lists their ids.",
+        "fr": "Jusqu'à cinq stations : le nom exactement comme Trafikverket l'écrit sur sa carte (« Kungälv »), ou l'identifiant de la station (il commence par « SE_STA_VVIS »). Un nom porté par plusieurs stations est refusé : le statut liste alors leurs identifiants."
+      }
     },
     {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
+      "key": "station_1",
+      "type": "string",
+      "label": { "en": "Station 1", "fr": "Station 1" },
+      "placeholder": { "en": "Kungälv", "fr": "Kungälv" },
+      "required": false
+    },
+    {
+      "key": "station_2",
+      "type": "string",
+      "label": { "en": "Station 2", "fr": "Station 2" },
+      "required": false
+    },
+    {
+      "key": "station_3",
+      "type": "string",
+      "label": { "en": "Station 3", "fr": "Station 3" },
+      "required": false
+    },
+    {
+      "key": "station_4",
+      "type": "string",
+      "label": { "en": "Station 4", "fr": "Station 4" },
+      "required": false
+    },
+    {
+      "key": "station_5",
+      "type": "string",
+      "label": { "en": "Station 5", "fr": "Station 5" },
+      "required": false
+    },
+    {
+      "key": "poll_interval",
+      "type": "number",
+      "label": {
+        "en": "Read interval (minutes)",
+        "fr": "Intervalle de lecture (minutes)"
+      },
+      "description": {
+        "en": "One request for all the stations each time. Nothing reads sooner, not even the test button or a restart. The stations measure every 10 to 30 minutes.",
+        "fr": "Une seule requête pour toutes les stations à chaque fois. Rien ne lit plus tôt, ni le bouton de test ni un redémarrage. Les stations mesurent toutes les 10 à 30 minutes."
+      },
       "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
-      "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
-      },
-      "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": 10,
+      "min": 5,
+      "max": 60
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
-      "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
+      "key": "test_connection",
+      "timeout_seconds": 120,
+      "label": { "en": "Test Trafikverket", "fr": "Tester Trafikverket" },
       "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
-      },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
-          "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
+        "en": "Reads the stations if the interval has passed (a refused key is then tried again, once) and shows the last measurement of each station and when the next read can happen.",
+        "fr": "Lit les stations si l'intervalle est écoulé (une clé refusée est alors réessayée, une fois) et affiche la dernière mesure de chaque station et l'heure de la prochaine lecture possible."
+      }
     }
   ]
 }

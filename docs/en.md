@@ -1,61 +1,110 @@
-# Demo Devices Template
+# Trafikverket road weather
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+**Unofficial connector, not affiliated with Trafikverket** (the Swedish
+Transport Administration). It brings into Gladys the measurements of the
+**road weather stations** you choose along the Swedish roads (air and road
+surface temperature, dew point, humidity, wind, precipitation, ice, snow and
+water on the road), read through the **official open API of Trafikverket**
+with a free API key of your own.
+
+> **This integration has never been tested with a real key.** It follows
+> pytrafikverket, the library of the Home Assistant integration, and the
+> documentation of the API. Please report what you see on the Gladys forum.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+One Gladys device per station, named "Trafikverket <station>", with the
+sensors the station has:
+
+| Sensor                             | Unit   | Notes                                    |
+| ---------------------------------- | ------ | ---------------------------------------- |
+| Air temperature                    | °C     |                                          |
+| Road temperature                   | °C     | probe (kept out of the room average)     |
+| Dew point                          | °C     | probe (kept out of the room average)     |
+| Humidity                           | %      |                                          |
+| Visibility                         | m      | not every station measures it            |
+| Wind speed, wind gust (30 min)     | m/s    | 10 minute average; highest 3 s gust      |
+| Wind direction                     | degree |                                          |
+| Precipitation                      | mm/h   | water of the last 30 minutes, times 2    |
+| Rain (30 min)                      | yes/no | rain seen in the last 30 minutes         |
+| Snowfall (30 min)                  | yes/no | snow seen in the last 30 minutes         |
+| Ice, snow, water on the road       | yes/no | what the road sensor sees ("givre", ice) |
+| Ice depth, snow depth, water depth | mm     | on the road surface                      |
+
+- Only what the station sends is created; a sensor once created is never
+  removed from the device.
+- The units are those Gladys lists for each kind of sensor; the API already
+  sends them, only the precipitation is converted (mm per 30 minutes to
+  mm/h). The yes/no sensors are read only: nothing can switch them.
+- The names of the sensors are in English; rename them when you create them
+  if you wish.
+- Trains, ferries and traffic cameras of Trafikverket are not part of this
+  integration.
+
+## Installation
+
+1. Create a free account on **data.trafikverket.se** and get an **API key**
+   there.
+2. Install the integration from the Gladys catalog (Gladys 5.1 or newer).
+3. In the **Configuration** screen, paste the key and enter up to five
+   stations: the name exactly as Trafikverket writes it on the map of its
+   road weather stations ("Kungälv"), or the id of the station (it starts
+   with "SE_STA_VVIS"). Upper and lower case do not matter.
+4. Click **Test Trafikverket**: the message shows the last measurement of
+   each station and its age.
+5. Open the **Discovery** tab and add the devices. Their values arrive as
+   soon as they are created, if the last measurement is recent.
 
 ## Configuration
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+| Field         | Default | What it does                                                |
+| ------------- | ------- | ----------------------------------------------------------- |
+| API key       |         | your key of the open API                                    |
+| Station 1 – 5 |         | a station name or id                                        |
+| Read interval | 10 min  | 5 to 60 minutes; one request for all the stations each time |
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+The **API key** is kept by Gladys in its database, never shown again; it is
+sent only to Trafikverket (api.trafikinfo.trafikverket.se), in the body of
+the query, never in a URL nor a log, and never written under `/data`.
 
-## Actions
+A name shared by several stations is refused: the status then lists their
+ids, enter one of them. A station not found is named by its number in the
+status ("Station 3 not found"): what you typed is never shown again there.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+## How it works
 
-## Scenes
+- **One request** for all your stations at each interval. **Nothing reads
+  sooner**: neither the test button, nor a reconnection to Gladys, nor a
+  saved configuration, nor a restart of the container (the instant of the
+  last request is kept under `/data`). A new key is tried a minute after the
+  last request.
+- **Fresh measurements only.** Each measurement carries the instant the
+  station made it. A measurement is published only when it is **newer than
+  the last one published** for that station (kept under `/data`, so a
+  restart never publishes an old one again) and **recent**: at most one hour
+  old (two intervals if longer, never more than two hours), measured on the
+  clock of Trafikverket. A station that stopped measuring shows "no recent
+  measurement" in the status and publishes nothing.
+- **Key refused** (HTTP 401 or 403): the integration stops asking. The
+  refusal is kept under `/data` (only a salted fingerprint of the refused
+  key, never the key) and survives a restart. It is lifted when you enter
+  another key, or when the test button succeeds (it tries once, when the
+  interval has passed).
+- **Too many requests (429) or the service down (5xx)**: a pause, from the
+  `Retry-After` of the answer, else 5 minutes doubling at each new failure,
+  between 1 minute and 6 hours, kept under `/data`.
+- Other failures (network, an error of the query): tried again at the next
+  interval.
+- The answer is bounded (256 KB) and read as JSON; the stations are matched
+  to your entries by their id or name.
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+## Read only
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+The integration only sends the query of the open API. It has no command and
+changes nothing anywhere.
 
-## Dashboard
+## Credits
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
-
-## Troubleshooting
-
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+The query and the fields read come from **pytrafikverket**
+(https://github.com/gjohansson-ST/pytrafikverket, MIT license), ported to
+JavaScript; see `THIRD_PARTY_NOTICES.md`.

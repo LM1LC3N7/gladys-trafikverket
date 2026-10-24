@@ -1,45 +1,91 @@
 // -----------------------------------------------------------------------------
-// Integration configuration.
-//
-// The configuration is filled in by the user in Gladys, from the `config_schema`
-// declared in `gladys-assistant-integration.json`. The SDK fetches it for you
-// (`gladys.getConfig()`) and notifies you of every change through
-// `gladys.onConfigUpdated()`.
-//
-// This module only provides defaults and normalizes the received object, so the
-// rest of the code never has to deal with `undefined`.
+// The configuration the user fills (manifest `config_schema`), normalized so
+// the rest of the code never deals with strings or `undefined`.
 // -----------------------------------------------------------------------------
 
-// Defaults: they MUST stay consistent with the `default` values declared in the
-// `config_schema` of the manifest.
+import { MAX_STATIONS } from './constants.js';
+
+// Defaults: they MUST match the `default` values of the manifest
+// (test/manifest.test.js checks it).
 export const DEFAULT_CONFIG = {
-  latitude: 48.8566, // Paris
-  longitude: 2.3522,
-  unit: 'celsius', // 'celsius' | 'fahrenheit'
-  // Seconds between two reads of the polled sensors. Gladys polls at most once
-  // a minute: slower intervals are applied by skipping polls (see
-  // createPoller in src/devices/index.js).
-  poll_frequency: 300,
-  // Reserved key (NOT in config_schema): because the manifest declares both
-  // 'local' and 'cloud' in its `transports` field, Gladys shows a standard
-  // "Prefer the local connection" toggle and sends the user's choice here.
-  // Read-only for the integration; defaults to true.
-  GLADYS_PREFER_LOCAL: true,
+  poll_interval: 10,
 };
 
+const MIN_INTERVAL = 5;
+const MAX_INTERVAL = 60;
+
+/** A number typed by the user; '' and null are "not set", never 0. */
+const number = (value, fallback, min, max) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.min(max, Math.max(min, Math.round(value)));
+  }
+  if (typeof value === 'string' && /^\s*\d{1,6}\s*$/.test(value)) {
+    return Math.min(max, Math.max(min, Number(value)));
+  }
+  return fallback;
+};
+
+const clean = (value) => (typeof value === 'string' ? value.trim() : '');
+
 /**
- * Merge the user config with the defaults.
- * @param {Record<string, unknown>} raw config returned by the SDK
+ * A key of the open API of Trafikverket: letters, digits, `-` and `_` only
+ * (the keys the portal gives are 32 hexadecimal digits). Anything else (a
+ * line break, a space, a `<`) is refused at once and never sent.
+ */
+export const KEY_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+
+/** A control character (C0, DEL, C1): never in a station name sent in XML. */
+const hasControl = (text) =>
+  [...text].some((c) => {
+    const code = c.charCodeAt(0);
+    return code < 0x20 || (code >= 0x7f && code <= 0x9f);
+  });
+
+/** The longest station name or id accepted. */
+const MAX_NAME = 80;
+
+/**
+ * `api_key`: the key (secret). `station_<n>`: the name of a road weather
+ * station as Trafikverket writes it ("Kungälv", ...), or its id
+ * ("SE_STA_VVIS..."). A bad or repeated entry is reported by its number
+ * only, never echoed (a key may have been pasted into the wrong field).
  */
 export function normalizeConfig(raw = {}) {
+  const stations = [];
+  const invalid = [];
+  const seen = new Set();
+  for (let n = 1; n <= MAX_STATIONS; n += 1) {
+    const text = clean(raw[`station_${n}`]).normalize('NFC');
+    if (!text) {
+      continue;
+    }
+    if (text.length > MAX_NAME || hasControl(text)) {
+      invalid.push({ slot: n, why: 'station' });
+      continue;
+    }
+    const folded = text.toLowerCase();
+    if (seen.has(folded)) {
+      invalid.push({ slot: n, why: 'duplicate' });
+      continue;
+    }
+    seen.add(folded);
+    stations.push({ slot: n, query: text });
+  }
+  const apiKey = clean(raw.api_key);
   return {
-    ...DEFAULT_CONFIG,
-    ...raw,
-    // Force the types: config may arrive as strings from a form.
-    latitude: Number(raw.latitude ?? DEFAULT_CONFIG.latitude),
-    longitude: Number(raw.longitude ?? DEFAULT_CONFIG.longitude),
-    poll_frequency: Number(raw.poll_frequency ?? DEFAULT_CONFIG.poll_frequency),
-    // The preference is a boolean; anything but an explicit false means true.
-    GLADYS_PREFER_LOCAL: raw.GLADYS_PREFER_LOCAL !== false,
+    apiKey,
+    keyInvalid: apiKey !== '' && !KEY_PATTERN.test(apiKey),
+    stations,
+    invalid,
+    pollMinutes: number(
+      raw.poll_interval,
+      DEFAULT_CONFIG.poll_interval,
+      MIN_INTERVAL,
+      MAX_INTERVAL,
+    ),
   };
 }
+
+/** A key that may be sent, and at least one station. */
+export const isReady = (config) =>
+  config.apiKey !== '' && !config.keyInvalid && config.stations.length > 0;
