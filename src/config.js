@@ -4,6 +4,7 @@
 // -----------------------------------------------------------------------------
 
 import { MAX_STATIONS } from './constants.js';
+import { isUnsafeChar } from './trafikverket.js';
 
 // Defaults: they MUST match the `default` values of the manifest
 // (test/manifest.test.js checks it).
@@ -34,12 +35,13 @@ const clean = (value) => (typeof value === 'string' ? value.trim() : '');
  */
 export const KEY_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
-/** A control character (C0, DEL, C1): never in a station name sent in XML. */
-const hasControl = (text) =>
-  [...text].some((c) => {
-    const code = c.charCodeAt(0);
-    return code < 0x20 || (code >= 0x7f && code <= 0x9f);
-  });
+/**
+ * A character never sent in a station name: controls, bidirectional
+ * controls, line separators, a lone surrogate, the non-characters XML 1.0
+ * forbids (isUnsafeChar). One of them would make the service refuse the
+ * whole query: the entry is refused alone, by its number.
+ */
+const hasControl = (text) => !text.isWellFormed() || [...text].some(isUnsafeChar);
 
 /** The longest station name or id accepted. */
 const MAX_NAME = 80;

@@ -83,7 +83,7 @@ export class TrafikverketApp {
     // The pace, the pause and the refusal live as long as the process,
     // across restarts of the app and reconnections to Gladys, and in /data
     // across restarts of the container.
-    this.store = new StateStore({ storage, now, timers, maxPause: BUSY_MAX });
+    this.store = new StateStore({ storage, now, monotonic, timers, maxPause: BUSY_MAX });
     /** station key -> station (every station met, configured or not). */
     this.stations = new Map();
     for (const saved of this.store.stations.values()) {
@@ -126,7 +126,7 @@ export class TrafikverketApp {
       }
       if (pace.refused) {
         this.error = 'refused';
-      } else if (!this.error && pace.pausedUntil > this.now()) {
+      } else if (!this.error && this.store.pauseLeft() > 0) {
         this.error = 'busy';
       }
     }
@@ -191,24 +191,22 @@ export class TrafikverketApp {
   }
 
   /**
-   * The earliest read: the interval (NEW_KEY_GAP for a new key) after the
-   * last request, and the end of a pause. A refused key is never read
-   * again by itself (`manual`: the test button may try it once the interval
-   * has passed).
+   * How long before the next read (ms, on the monotonic clock): the
+   * interval (NEW_KEY_GAP for a new key) after the last request, and the
+   * end of a pause. A refused key is never read again by itself (`manual`:
+   * the test button may try it once the interval has passed).
    */
-  earliest({ manual = false } = {}) {
-    const pace = this.store.get();
-    const gap = this.freshKey ? NEW_KEY_GAP : this.intervalMs();
-    const at = Math.max(pace.lastAttemptAt + gap, pace.pausedUntil);
-    if (pace.refused && !manual) {
+  waitMs({ manual = false } = {}) {
+    if (this.store.get().refused && !manual) {
       return Infinity;
     }
-    return at;
+    const gap = this.freshKey ? NEW_KEY_GAP : this.intervalMs();
+    return Math.max(0, gap - this.store.sinceAttempt(), this.store.pauseLeft());
   }
 
   /** When the next read can happen (shown by the test button). */
   nextRead() {
-    return Math.max(this.earliest({ manual: true }), this.store.writableAt(), this.now());
+    return this.now() + Math.max(this.waitMs({ manual: true }), this.store.writeWait());
   }
 
   // --- Reading -----------------------------------------------------------------------
@@ -244,7 +242,9 @@ export class TrafikverketApp {
     }
     const generation = this.generation;
     const now = this.now();
-    if (now < this.earliest({ manual }) || !this.store.canWrite()) {
+    if (this.waitMs({ manual }) > 0 || !this.store.canWrite()) {
+      // Nothing due: the status only follows the end of a pause.
+      await this.refreshStatus();
       return;
     }
     this.store.update({ lastAttemptAt: now }, undefined, { defer: true });
@@ -284,7 +284,9 @@ export class TrafikverketApp {
       // Disconnected (or reconfigured) meanwhile: no status is set.
       return;
     }
-    this.error = error.kind;
+    // The cause shown is the real one: a key still refused stays "refused"
+    // (the test button that tried it again met another failure).
+    this.error = this.store.get().refused ? 'refused' : error.kind;
     this.logger.warn(`Trafikverket: ${this.scrub(error)}`);
     this.refreshStatus().catch(() => {});
   }
@@ -354,7 +356,11 @@ export class TrafikverketApp {
       }
       const age = record.sampleAt === null ? null : reference - record.sampleAt;
       const usable = age !== null && age >= -FUTURE_SLACK && age <= this.staleMs();
-      const newer = station.sampleAt === null || record.sampleAt > station.sampleAt;
+      // Deduplicated on the raw Sample of the service, then on its instant:
+      // the same measurement is never published twice, whatever the clocks.
+      const newer =
+        record.sample !== station.sample &&
+        (station.sampleAt === null || record.sampleAt > station.sampleAt);
       if (!usable) {
         station.error = 'stale';
         station.reading = undefined;
@@ -374,15 +380,6 @@ export class TrafikverketApp {
         }
       }
       this.store.saveStation(this.saved(station), configured);
-    }
-    for (const key of configured) {
-      if (!records.some((r) => r.key === key)) {
-        // Configured, found before, not in this answer (deleted meanwhile).
-        const station = this.stations.get(key);
-        if (station) {
-          station.error = 'stale';
-        }
-      }
     }
     await this.publishDiscovered();
     for (const station of fresh) {
@@ -550,11 +547,19 @@ export class TrafikverketApp {
     };
   }
 
+  /** The reason of the account: "(pause)" only while a pause runs. */
+  reasonKind() {
+    if ((this.error === 'limited' || this.error === 'busy') && this.store.pauseLeft() > 0) {
+      return `${this.error}Paused`;
+    }
+    return this.error;
+  }
+
   /** What has no value, and why: [{ name, kind }]. */
   failing() {
     const list = [];
     if (this.error) {
-      list.push({ name: 'Trafikverket', kind: this.error });
+      list.push({ name: 'Trafikverket', kind: this.reasonKind() });
     }
     for (const station of this.current()) {
       if (station.error) {
@@ -634,11 +639,11 @@ export class TrafikverketApp {
   lines(lang) {
     const colon = lang === 'fr' ? ' :' : ':';
     const head = [];
-    const pace = this.store.get();
     if (this.error) {
       head.push(reason(this.error)[lang]);
-      if (pace.pausedUntil > this.now()) {
-        head.push(T.pausedUntil(pace.pausedUntil)[lang]);
+      const left = this.store.pauseLeft();
+      if (left > 0) {
+        head.push(T.pausedUntil(this.now() + left)[lang]);
       }
     } else {
       head.push(`${this.current().length} station(s)`);

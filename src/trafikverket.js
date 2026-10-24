@@ -20,9 +20,9 @@ import { NetworkError, postXml } from './http.js';
 import { parseSample } from './time.js';
 
 /**
- * kind: refused (401/403: the key), limited (429), busy (5xx), invalid (not
- * an answer of the API), failed (network, another status, an error of the
- * query).
+ * kind: refused (401/403: the key), limited (429), busy (5xx), rejected
+ * (another 4xx, or an ERROR in the answer: the service refused the query),
+ * invalid (not an answer of the API), failed (network, a redirection).
  */
 export class ApiError extends Error {
   constructor(kind, detail = '', { retryAfterMs, status } = {}) {
@@ -92,14 +92,35 @@ export function buildQuery(apiKey, queries) {
 
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-/** Printable text of the answer, bounded (never a control character). */
+/**
+ * A character never shown nor sent: C0 and C1 controls, DEL, the
+ * bidirectional controls (they reorder what follows), the line and
+ * paragraph separators, a lone surrogate and the non-characters (U+FDD0 to
+ * U+FDEF, U+xFFFE, U+xFFFF), which XML 1.0 forbids.
+ */
+export const isUnsafeChar = (c) => {
+  const code = c.codePointAt(0);
+  return (
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    code === 0x061c ||
+    code === 0x200e ||
+    code === 0x200f ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    (code >= 0xd800 && code <= 0xdfff) ||
+    (code >= 0xfdd0 && code <= 0xfdef) ||
+    (code & 0xfffe) === 0xfffe
+  );
+};
+
+/** Printable text of the answer, bounded (never an unsafe character). */
 export const cleanText = (value, max) =>
   typeof value === 'string'
     ? [...value]
-        .filter((c) => {
-          const code = c.charCodeAt(0);
-          return code >= 0x20 && !(code >= 0x7f && code <= 0x9f);
-        })
+        .filter((c) => !isUnsafeChar(c))
         .join('')
         .trim()
         .slice(0, max)
@@ -120,14 +141,31 @@ function parseJson(text) {
   }
 }
 
-/** The ERROR of the answer: its SOURCE only (the MESSAGE may quote the query). */
+/** The SOURCE values of an ERROR shown in a log; any other is "error". */
+const KNOWN_SOURCES = new Set([
+  'Authentication',
+  'Authorization',
+  'Request',
+  'Query',
+  'Filter',
+  'Include',
+  'Login',
+  'Schema',
+  'Validation',
+]);
+
+/**
+ * The ERROR of the answer: its SOURCE only when it is a known word (the
+ * MESSAGE, or an odd SOURCE, may quote the query and so a part of the key).
+ */
 const errorOf = (body) => {
   const result = body?.RESPONSE?.RESULT;
   const first = Array.isArray(result) ? result[0] : undefined;
   if (!isObject(first) || !Object.hasOwn(first, 'ERROR')) {
     return null;
   }
-  return cleanText(first.ERROR?.SOURCE, 40) || 'error';
+  const source = isObject(first.ERROR) ? first.ERROR.SOURCE : undefined;
+  return typeof source === 'string' && KNOWN_SOURCES.has(source) ? source : 'error';
 };
 
 /**
@@ -154,6 +192,9 @@ export async function readStations(apiKey, queries) {
   if (status === 401 || status === 403) {
     throw new ApiError('refused', `HTTP ${status}`, { status });
   }
+  if (status >= 300 && status < 400) {
+    throw new ApiError('failed', `HTTP ${status}`, { status });
+  }
   if (status < 200 || status > 299) {
     let source = '';
     try {
@@ -161,12 +202,12 @@ export async function readStations(apiKey, queries) {
     } catch {
       // Not JSON: the status says enough.
     }
-    throw new ApiError('failed', `HTTP ${status}${source ? ` (${source})` : ''}`, { status });
+    throw new ApiError('rejected', `HTTP ${status}${source ? ` (${source})` : ''}`, { status });
   }
   const body = parseJson(response.text);
   const source = errorOf(body);
   if (source) {
-    throw new ApiError('failed', `query error (${source})`, { status });
+    throw new ApiError('rejected', `query error (${source})`, { status });
   }
   const result = body?.RESPONSE?.RESULT;
   if (!Array.isArray(result) || !isObject(result[0])) {

@@ -86,12 +86,16 @@ n'y est jamais réaffiché.
   une minute après la dernière requête.
 - **Mesures récentes seulement.** Chaque mesure porte l'heure à laquelle la
   station l'a faite. Une mesure n'est publiée que si elle est **plus récente
-  que la dernière publiée** pour cette station (gardée sous `/data` : un
-  redémarrage ne republie jamais une ancienne) et **récente** : une heure au
-  plus (deux intervalles si c'est plus long, jamais plus de deux heures),
-  mesurée à l'horloge de Trafikverket. Une station qui ne mesure plus affiche
+  que la dernière publiée** pour cette station (son heure brute et son instant
+  sont gardés sous `/data` : un redémarrage propre ne la republie pas) et
+  **récente** : une heure au plus (deux intervalles si c'est plus long,
+  jamais plus de deux heures), mesurée à l'horloge de Trafikverket. Un arrêt
+  brutal (coupure de courant, `docker kill`) dans la minute qui suit une
+  lecture peut republier une fois la dernière mesure au redémarrage, jamais
+  au-delà de cette limite d'âge. Une station qui ne mesure plus affiche
   « pas de mesure récente » dans le statut et ne publie rien.
-- **Clé refusée** (HTTP 401 ou 403) : l'intégration cesse de demander. Le
+- **Clé refusée** (HTTP 401 ou 403) : l'intégration cesse de demander ; le
+  statut indique « clé d'API refusée » tant que le refus tient. Le
   refus est gardé sous `/data` (seulement une empreinte salée de la clé
   refusée, jamais la clé) et survit à un redémarrage. Il est levé quand vous
   saisissez une autre clé, ou quand le bouton de test réussit (il essaie une
@@ -99,8 +103,14 @@ n'y est jamais réaffiché.
 - **Trop de requêtes (429) ou service indisponible (5xx)** : une pause,
   d'après le `Retry-After` de la réponse, sinon 5 minutes doublées à chaque
   nouvel échec, entre 1 minute et 6 heures, gardée sous `/data`.
-- Autres échecs (réseau, erreur de la requête) : nouvel essai à l'intervalle
-  suivant.
+- Autres échecs : nouvel essai à l'intervalle suivant. Le statut distingue
+  « requête refusée par Trafikverket » (autre HTTP 4xx, ou erreur dans la
+  réponse) de « pas de réponse » (réseau, délai dépassé) ; « (pause) »
+  n'apparaît que pendant une pause.
+- Un nom de station contenant un caractère de contrôle, un contrôle
+  bidirectionnel, un séparateur de ligne ou un caractère interdit en XML est
+  refusé et désigné par son numéro ; ces caractères sont aussi retirés des
+  noms envoyés par Trafikverket.
 - La réponse est bornée (256 Ko) et lue en JSON ; les stations sont
   rapprochées de vos saisies par leur identifiant ou leur nom.
 

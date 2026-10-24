@@ -18,7 +18,9 @@ the notes of the version's GitHub Release.
   rain and snowfall, ice, snow and water on the road. Up to five stations,
   by name or id, one request per interval (10 minutes by default).
 - Only fresh measurements are published (newer than the last one, at most
-  one hour old), never an old one again after a restart.
+  one hour old); a clean restart does not publish the last one again (a
+  hard stop within the minute after a read may publish it once more, never
+  past the age limit).
 - A refused key stops the reads until the key changes or the test button
   succeeds; 429/5xx pause the reads (1 minute to 6 hours). The key is never
   logged nor written under `/data`.

@@ -11,8 +11,11 @@ export const utcTime = (ms) => `${new Date(ms).toISOString().slice(11, 16)} UTC`
 /** Why the account or a station has no fresh value. */
 export const REASONS = {
   refused: { en: 'API key refused', fr: "clé d'API refusée" },
-  limited: { en: 'too many requests (pause)', fr: 'trop de requêtes (pause)' },
-  busy: { en: 'service unavailable (pause)', fr: 'service indisponible (pause)' },
+  limited: { en: 'too many requests', fr: 'trop de requêtes' },
+  limitedPaused: { en: 'too many requests (pause)', fr: 'trop de requêtes (pause)' },
+  busy: { en: 'service unavailable', fr: 'service indisponible' },
+  busyPaused: { en: 'service unavailable (pause)', fr: 'service indisponible (pause)' },
+  rejected: { en: 'query refused by Trafikverket', fr: 'requête refusée par Trafikverket' },
   failed: { en: 'no answer', fr: 'pas de réponse' },
   invalid: {
     en: 'not an answer of Trafikverket',

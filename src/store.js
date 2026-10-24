@@ -93,6 +93,8 @@ export function fileStorage(path, { logger } = {}) {
   };
 }
 
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
 const finite = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 
 const STATION_KEY = /^[a-z0-9_.-]{1,64}$/;
@@ -116,34 +118,39 @@ function stationOf(value, now) {
     fields: Array.isArray(value.fields)
       ? [...new Set(value.fields.filter((f) => typeof f === 'string' && FIELD_KEYS.has(f)))]
       : [],
-    sample: typeof value.sample === 'string' ? value.sample.slice(0, 40) : '',
-    // An instant read back is never in the future.
-    sampleAt:
-      typeof value.sampleAt === 'number' && Number.isFinite(value.sampleAt)
-        ? Math.min(value.sampleAt, now)
-        : null,
+    // The instant of the last sample is kept as the service gave it (the
+    // clock of Gladys may lag behind the service): only an absurd one, more
+    // than a day ahead, is dropped with its raw text.
+    ...(typeof value.sampleAt === 'number' &&
+    Number.isFinite(value.sampleAt) &&
+    value.sampleAt <= now + SAMPLE_AHEAD_MAX
+      ? {
+          sample: typeof value.sample === 'string' ? value.sample.slice(0, 40) : '',
+          sampleAt: value.sampleAt,
+        }
+      : { sample: '', sampleAt: null }),
     changedAt: Math.min(finite(value.changedAt), now),
     seenAt: Math.min(finite(value.seenAt), now),
   };
 }
 
-const EMPTY = Object.freeze({
-  lastAttemptAt: 0,
-  pausedUntil: 0,
-  streak: 0,
-  refused: false,
-  fp: '',
-});
+/** A sample instant read back more than this ahead of the clock is absurd. */
+const SAMPLE_AHEAD_MAX = 24 * 60 * 60_000;
+
+const defaultMonotonic = () => performance.now();
 
 export class StateStore {
   constructor({
     storage = memoryStorage(),
     now = Date.now,
+    monotonic = defaultMonotonic,
     timers = { setTimeout, clearTimeout },
     maxPause,
   }) {
     this.storage = storage;
     this.now = now;
+    this.monotonic = monotonic;
+    this.maxPause = maxPause;
     this.timers = timers;
     this.flushTimer = undefined;
     this.dirty = false;
@@ -152,21 +159,27 @@ export class StateStore {
     const saved = storage.load();
     const valid = saved && typeof saved === 'object' && !Array.isArray(saved);
     const at = now();
+    const mono = monotonic();
     this.salt =
       valid && typeof saved.salt === 'string' && /^[0-9a-f]{32}$/.test(saved.salt)
         ? saved.salt
         : randomBytes(16).toString('hex');
-    // The instant of the last write, never in the future: a restart loop
-    // writes no more often than a running process.
-    this.writtenAt = valid ? Math.min(finite(saved.writtenAt), at) : 0;
+    // In memory, every deadline (last request, end of a pause, last write)
+    // is held on the monotonic clock: a wall clock that jumps (NTP, a wrong
+    // RTC) neither freezes the reads nor shortens or stretches a pause. The
+    // wall clock only serves the file (written from the monotonic deadlines)
+    // and the restart. The instant of the last write is never in the
+    // future: a restart loop writes no more often than a running process.
+    this.writtenMono = valid ? mono - (at - Math.min(finite(saved.writtenAt), at)) : -Infinity;
     const pace = valid && saved.pace && typeof saved.pace === 'object' ? saved.pace : {};
     // A time read back is capped (a request never "in the future", a pause
     // never longer than a fresh one): a clock that jumped, or a hand-edited
     // file, never stops the integration for longer.
     const refused = pace.refused === true;
+    const lastAttemptAt = Math.min(finite(pace.lastAttemptAt), at);
     this.pace = {
-      lastAttemptAt: Math.min(finite(pace.lastAttemptAt), at),
-      pausedUntil: Math.min(finite(pace.pausedUntil), at + maxPause),
+      attemptMono: lastAttemptAt > 0 ? mono - (at - lastAttemptAt) : -Infinity,
+      pausedMono: mono + clamp(finite(pace.pausedUntil) - at, 0, maxPause),
       streak: Math.min(Math.max(0, Math.floor(finite(pace.streak))), 20),
       refused,
       fp: refused && typeof pace.fp === 'string' && /^[0-9a-f]{32}$/.test(pace.fp) ? pace.fp : '',
@@ -187,8 +200,34 @@ export class StateStore {
     return scryptSync(String(key), `${this.salt}:api_key`, 16).toString('hex');
   }
 
+  /** The pace as wall-clock instants (status, file), derived from the monotonic deadlines. */
   get() {
-    return { ...EMPTY, ...this.pace };
+    const now = this.now();
+    const mono = this.monotonic();
+    return {
+      lastAttemptAt: Number.isFinite(this.pace.attemptMono)
+        ? now - (mono - this.pace.attemptMono)
+        : 0,
+      pausedUntil: this.pace.pausedMono > mono ? now + (this.pace.pausedMono - mono) : 0,
+      streak: this.pace.streak,
+      refused: this.pace.refused,
+      fp: this.pace.fp,
+    };
+  }
+
+  /** Time since the last request (monotonic); Infinity before the first one. */
+  sinceAttempt() {
+    return this.monotonic() - this.pace.attemptMono;
+  }
+
+  /** Time left in the pause (monotonic), never more than the longest pause. */
+  pauseLeft() {
+    return clamp(this.pace.pausedMono - this.monotonic(), 0, this.maxPause);
+  }
+
+  /** Time left before a write is allowed (monotonic). */
+  writeWait() {
+    return clamp(this.writtenMono + WRITE_GAP - this.monotonic(), 0, WRITE_GAP);
   }
 
   /**
@@ -221,7 +260,20 @@ export class StateStore {
    */
   update(changes, key, { defer = false } = {}) {
     const before = JSON.stringify(this.pace);
-    const next = { ...this.pace, ...changes };
+    const { lastAttemptAt, pausedUntil, ...rest } = changes;
+    const next = { ...this.pace, ...rest };
+    // Wall-clock instants given by the caller (`now` + a delay) become
+    // monotonic deadlines at once.
+    const now = this.now();
+    const mono = this.monotonic();
+    if (lastAttemptAt !== undefined) {
+      next.attemptMono = mono - Math.max(0, now - lastAttemptAt);
+    }
+    if (pausedUntil !== undefined) {
+      const pause = clamp(pausedUntil - now, 0, this.maxPause);
+      // No pause: a deadline already past is kept as it is (no write for nothing).
+      next.pausedMono = pause > 0 ? mono + pause : Math.min(this.pace.pausedMono, mono);
+    }
     if (changes.refused === true && key !== undefined) {
       next.fp = this.fingerprint(key);
     } else if (!next.refused) {
@@ -263,13 +315,13 @@ export class StateStore {
     }
   }
 
-  /** The first instant a write is allowed. */
+  /** The first instant a write is allowed (wall clock, for the status). */
   writableAt() {
-    return this.writtenAt + WRITE_GAP;
+    return this.now() + this.writeWait();
   }
 
   canWrite() {
-    return this.now() >= this.writableAt();
+    return this.writeWait() === 0;
   }
 
   markDirty() {
@@ -281,7 +333,7 @@ export class StateStore {
     if (this.flushTimer !== undefined) {
       return;
     }
-    const delay = Math.max(0, this.writableAt() - this.now());
+    const delay = this.writeWait();
     this.flushTimer = this.timers.setTimeout(() => {
       this.flushTimer = undefined;
       this.flush();
@@ -311,12 +363,12 @@ export class StateStore {
   write() {
     this.timers.clearTimeout(this.flushTimer);
     this.flushTimer = undefined;
-    this.writtenAt = this.now();
+    this.writtenMono = this.monotonic();
     this.dirty = false;
     this.storage.save({
       salt: this.salt,
-      writtenAt: this.writtenAt,
-      pace: this.pace,
+      writtenAt: this.now(),
+      pace: this.get(),
       stations: [...this.stations.values()],
     });
   }

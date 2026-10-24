@@ -200,6 +200,20 @@ test('the configuration is normalized', () => {
   assert.equal(normalizeConfig({ poll_interval: 1 }).pollMinutes, 5);
   assert.equal(normalizeConfig({ poll_interval: '120' }).pollMinutes, 60);
   assert.equal(normalizeConfig({ poll_interval: '7.5x' }).pollMinutes, 10);
+  // Characters XML forbids, a lone surrogate, bidirectional controls, separators: refused by number.
+  const hostile = normalizeConfig({
+    station_1: 'Oops\ufffe',
+    station_2: 'Oops\uffff',
+    station_3: 'Oops\ud800',
+    station_4: 'Kung\u202eälv',
+    station_5: 'A\u2028B',
+  });
+  assert.deepEqual(hostile.stations, []);
+  assert.deepEqual(
+    hostile.invalid.map((i) => [i.slot, i.why]),
+    [1, 2, 3, 4, 5].map((n) => [n, 'station']),
+  );
+  assert.equal(normalizeConfig({ station_1: 'Ö\u{1F600}' }).stations.length, 1, 'a pair is fine');
   for (const bad of ['short', 'with space 0123456789', 'k"/><x>0123456789', 'é0123456789abc']) {
     assert.equal(normalizeConfig({ api_key: bad }).keyInvalid, true, bad);
   }

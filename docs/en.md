@@ -16,20 +16,20 @@ with a free API key of your own.
 One Gladys device per station, named "Trafikverket <station>", with the
 sensors the station has:
 
-| Sensor                             | Unit   | Notes                                    |
-| ---------------------------------- | ------ | ---------------------------------------- |
-| Air temperature                    | °C     |                                          |
-| Road temperature                   | °C     | probe (kept out of the room average)     |
-| Dew point                          | °C     | probe (kept out of the room average)     |
-| Humidity                           | %      |                                          |
-| Visibility                         | m      | not every station measures it            |
-| Wind speed, wind gust (30 min)     | m/s    | 10 minute average; highest 3 s gust      |
-| Wind direction                     | degree |                                          |
-| Precipitation                      | mm/h   | water of the last 30 minutes, times 2    |
-| Rain (30 min)                      | yes/no | rain seen in the last 30 minutes         |
-| Snowfall (30 min)                  | yes/no | snow seen in the last 30 minutes         |
-| Ice, snow, water on the road       | yes/no | what the road sensor sees ("givre", ice) |
-| Ice depth, snow depth, water depth | mm     | on the road surface                      |
+| Sensor                             | Unit   | Notes                                  |
+| ---------------------------------- | ------ | -------------------------------------- |
+| Air temperature                    | °C     |                                        |
+| Road temperature                   | °C     | probe (kept out of the room average)   |
+| Dew point                          | °C     | probe (kept out of the room average)   |
+| Humidity                           | %      |                                        |
+| Visibility                         | m      | not every station measures it          |
+| Wind speed, wind gust (30 min)     | m/s    | 10 minute average; highest 3 s gust    |
+| Wind direction                     | degree |                                        |
+| Precipitation                      | mm/h   | water of the last 30 minutes, times 2  |
+| Rain (30 min)                      | yes/no | rain seen in the last 30 minutes       |
+| Snowfall (30 min)                  | yes/no | snow seen in the last 30 minutes       |
+| Ice, snow, water on the road       | yes/no | what the road sensor sees (frost, ice) |
+| Ice depth, snow depth, water depth | mm     | on the road surface                    |
 
 - Only what the station sends is created; a sensor once created is never
   removed from the device.
@@ -80,12 +80,15 @@ status ("Station 3 not found"): what you typed is never shown again there.
   last request.
 - **Fresh measurements only.** Each measurement carries the instant the
   station made it. A measurement is published only when it is **newer than
-  the last one published** for that station (kept under `/data`, so a
-  restart never publishes an old one again) and **recent**: at most one hour
-  old (two intervals if longer, never more than two hours), measured on the
-  clock of Trafikverket. A station that stopped measuring shows "no recent
+  the last one published** for that station (its raw time and instant are
+  kept under `/data`, so a clean restart does not publish it again) and
+  **recent**: at most one hour old (two intervals if longer, never more than
+  two hours), measured on the clock of Trafikverket. A hard stop (power cut,
+  `docker kill`) within the minute after a read may publish the last
+  measurement once more after the restart, never past that age limit. A station that stopped measuring shows "no recent
   measurement" in the status and publishes nothing.
-- **Key refused** (HTTP 401 or 403): the integration stops asking. The
+- **Key refused** (HTTP 401 or 403): the integration stops asking; the
+  status says "API key refused" as long as the refusal holds. The
   refusal is kept under `/data` (only a salted fingerprint of the refused
   key, never the key) and survives a restart. It is lifted when you enter
   another key, or when the test button succeeds (it tries once, when the
@@ -93,8 +96,14 @@ status ("Station 3 not found"): what you typed is never shown again there.
 - **Too many requests (429) or the service down (5xx)**: a pause, from the
   `Retry-After` of the answer, else 5 minutes doubling at each new failure,
   between 1 minute and 6 hours, kept under `/data`.
-- Other failures (network, an error of the query): tried again at the next
-  interval.
+- Other failures: tried again at the next interval. The status tells "query
+  refused by Trafikverket" (another HTTP 4xx, or an error in the answer) from
+  "no answer" (network, timeout); "(pause)" is shown only while a pause
+  runs.
+- A station name holding a control character, a bidirectional control, a
+  line separator or a character XML forbids is refused, named by its
+  number; such characters are also removed from the names Trafikverket
+  sends.
 - The answer is bounded (256 KB) and read as JSON; the stations are matched
   to your entries by their id or name.
 

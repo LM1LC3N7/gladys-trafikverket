@@ -88,3 +88,19 @@
   per minute of the core; no backlog needed.
 - **Status and Discovery republished at each `connected`**; a reconnection
   keeps the pace, the pause and the refusal.
+- **Monotonic deadlines** (review r1, lesson 5 of lot 14): the last
+  request, the end of a pause and the last write of `/data` are held in
+  memory on the monotonic clock; the wall clock only serves the file
+  (written from those deadlines) and the restart, where every instant read
+  back is capped (a request never in the future, a pause at most 6 hours).
+- **Raw Sample deduplication** (review r1, lesson 28): a measurement is new
+  only if its raw `Observation.Sample` differs from the last one published
+  and its instant is later; the instant is kept as the service gave it
+  (only one more than a day ahead of the clock is dropped at load).
+- **Reasons** (review r1): "API key refused" holds as long as the refusal;
+  "query refused by Trafikverket" for another 4xx or an ERROR; "(pause)"
+  only while a pause runs. `ERROR.SOURCE` reaches a log only when it is a
+  known word ("error" otherwise), so no fragment of the key can leak.
+- **Unsafe characters** (review r1): controls, bidirectional controls,
+  U+2028/U+2029, lone surrogates and non-characters are refused in a
+  station entry (by its number) and removed from the names of the answer.

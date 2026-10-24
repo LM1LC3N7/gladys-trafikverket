@@ -102,14 +102,15 @@ test('the answer: stations with their values and the instant of their measuremen
   });
 });
 
-test('statuses and errors: refused, limited, busy, failed, invalid', async () => {
+test('statuses and errors: refused, limited, busy, rejected, failed, invalid', async () => {
   const cases = [
     [() => json({}, 401), 'refused'],
     [() => json({}, 403), 'refused'],
     [() => json({}, 429, { 'retry-after': '120' }), 'limited'],
     [() => json({}, 502), 'busy'],
-    [() => json({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request' } }] } }, 400), 'failed'],
-    [() => json({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request' } }] } }), 'failed'],
+    [() => json({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request' } }] } }, 400), 'rejected'],
+    [() => json({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request' } }] } }), 'rejected'],
+    [() => json({}, 404), 'rejected'],
     [() => new Response('<html>', { status: 200 }), 'invalid'],
     [() => json({ RESPONSE: {} }), 'invalid'],
     [() => json({ RESPONSE: { RESULT: [{ WeatherMeasurepoint: {} }] } }), 'invalid'],
@@ -139,6 +140,31 @@ test('the error messages carry neither the key nor the answer', async () => {
     [URL_PATTERN, () => json({ RESPONSE: { RESULT: [{ ERROR: { MESSAGE: API_KEY } }] } }, 400)],
   ]);
   await assert.rejects(readStations(API_KEY, ['x']), (err) => !err.message.includes(API_KEY));
+});
+
+test('ERROR.SOURCE reaches a message only when it is a known word (never a part of the key)', async () => {
+  for (const [source, shown] of [
+    ['Request', 'HTTP 400 (Request)'],
+    [API_KEY.slice(0, 31), 'HTTP 400 (error)'],
+    ['Authentication ' + API_KEY.slice(0, 8), 'HTTP 400 (error)'],
+    [{ nested: API_KEY }, 'HTTP 400 (error)'],
+  ]) {
+    fake = installFetch([
+      [URL_PATTERN, () => json({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: source } }] } }, 400)],
+    ]);
+    await assert.rejects(readStations(API_KEY, ['x']), (err) => {
+      assert.equal(err.message, `rejected: ${shown}`);
+      return true;
+    });
+    fake.restore();
+  }
+});
+
+test('names of the answer: controls, bidirectional controls, separators and non-characters removed', async () => {
+  const hostile = 'K\u001b[31m\u202eung\u2066\u2069\u200fälv\u2028\u2029\ufffe\uffff\ufdd0\ud800';
+  fake = installFetch([[URL_PATTERN, () => json(answer([record({ name: hostile })]))]]);
+  const { stations } = await readStations(API_KEY, ['x']);
+  assert.equal(stations[0].name, 'K[31mungälv');
 });
 
 test('an answer too large is refused, read in chunks without holding more than the limit', async () => {

@@ -511,3 +511,123 @@ test('the states of one read stay far under the 300 per minute of the core', asy
   const { MAX_STATIONS } = await import('../src/constants.js');
   assert.ok(FIELDS.length * MAX_STATIONS <= 100);
 });
+
+test('the wall clock goes back 24 h after a read: the next read still comes after the interval', async () => {
+  const ctx = await setup();
+  await ctx.app.start(CONFIG);
+  ctx.clock.jump(-24 * 3_600_000);
+  await advance(ctx, 10 * 60_000);
+  assert.equal(requests(), 2, 'read again after the monotonic interval');
+  // The file keeps being written (the write gap is monotonic too).
+  await ctx.timers.runTimeouts();
+  assert.ok(ctx.app.store.storage.value.pace.lastAttemptAt <= ctx.clock.now());
+  const button = await ctx.app.testConnection();
+  assert.match(button.en, /next read possible at 12:20 UTC/);
+});
+
+test('a 429 of 1 hour, then the wall clock goes back 24 h: the pause stays 1 hour', async () => {
+  const ctx = await setup();
+  ctx.respond = () => json({}, 429, { 'retry-after': '3600' });
+  await ctx.app.start(CONFIG);
+  ctx.clock.jump(-24 * 3_600_000);
+  assert.ok(ctx.app.store.pauseLeft() <= 3_600_000);
+  ctx.respond = () => json(answer([record({ sampleAt: ctx.clock.now() - 60_000 })]));
+  await advance(ctx, 59 * 60_000);
+  assert.equal(requests(), 1);
+  await advance(ctx, 2 * 60_000);
+  assert.equal(requests(), 2, 'read once the hour has passed on the monotonic clock');
+});
+
+test('a 429 of 6 hours, then the wall clock goes forward 24 h: the pause holds', async () => {
+  const ctx = await setup();
+  ctx.respond = () => json({}, 429, { 'retry-after': String(6 * 3600) });
+  await ctx.app.start(CONFIG);
+  ctx.clock.jump(24 * 3_600_000);
+  await advance(ctx, 2 * 60_000);
+  assert.equal(requests(), 1);
+  await advance(ctx, 5 * 60 * 60_000);
+  assert.equal(requests(), 1, 'still paused after 5 hours');
+  assert.match(ctx.gladys.fake.connectionStatus.message.en, /too many requests \(pause\)/);
+  await advance(ctx, 60 * 60_000);
+  assert.equal(requests(), 2);
+});
+
+test('the clock of Gladys 30 min behind the service, a clean restart: the same Sample is not published again', async () => {
+  const clock = createClock(NOW - 30 * 60_000);
+  const storage = timedStorage(clock);
+  const ctx = await setup({ storage, clock });
+  ctx.respond = () =>
+    json(answer([record({ sampleAt: NOW - 5 * 60_000 })]), 200, {
+      date: new Date(clock.now() + 30 * 60_000).toUTCString(),
+    });
+  await ctx.app.start(CONFIG);
+  await createAll(ctx.gladys);
+  assert.equal(ctx.published.length, 1);
+  ctx.app.shutdown();
+  assert.equal(storage.value.stations[0].sampleAt, NOW - 5 * 60_000, 'kept as the service gave it');
+  fake.restore();
+  clock.advance(10 * 60_000);
+  const again = await setup({ storage, clock });
+  again.respond = ctx.respond;
+  await again.app.start(CONFIG);
+  await createAll(again.gladys);
+  assert.equal(requests(), 1);
+  assert.equal(again.published.length, 0, 'the same Sample is not published again');
+});
+
+test('a sample instant more than a day ahead in the file is dropped with its raw text', async () => {
+  const clock = createClock();
+  const storage = timedStorage(clock, {
+    stations: [
+      {
+        key: 'se_sta_vvis1001',
+        id: 'SE_STA_VVIS1001',
+        name: 'Kungälv',
+        fields: ['air_temperature'],
+        sample: 'x',
+        sampleAt: NOW + 2 * 24 * 3_600_000,
+      },
+    ],
+  });
+  const ctx = await setup({ storage, clock });
+  const station = ctx.app.stations.get('se_sta_vvis1001');
+  assert.equal(station.sampleAt, null);
+  assert.equal(station.sample, '');
+  await ctx.app.start(CONFIG);
+  await createAll(ctx.gladys);
+  assert.equal(ctx.published.length, 1, 'a fresh measurement is published again');
+});
+
+test('the reason shown is the real one: refused stays refused, a refused query, (pause) only during a pause', async () => {
+  const ctx = await setup();
+  ctx.respond = () => json({}, 401);
+  await ctx.app.start(CONFIG);
+  ctx.clock.advance(10 * 60_000);
+  ctx.respond = () => {
+    throw new TypeError('fetch failed');
+  };
+  const button = await ctx.app.testConnection();
+  assert.equal(requests(), 2);
+  assert.match(button.en, /API key refused/);
+  assert.match(ctx.gladys.fake.connectionStatus.message.en, /Trafikverket \(API key refused\)/);
+  assert.match(ctx.gladys.fake.connectionStatus.message.en, /refused the API key/);
+  fake.restore();
+
+  const query = await setup();
+  query.respond = () => json({ RESPONSE: { RESULT: [{ ERROR: { SOURCE: 'Request' } }] } }, 400);
+  await query.app.start(CONFIG);
+  assert.match(
+    query.gladys.fake.connectionStatus.message.en,
+    /Trafikverket \(query refused by Trafikverket\)/,
+  );
+  assert.match(query.gladys.fake.connectionStatus.message.fr, /requête refusée par Trafikverket/);
+  fake.restore();
+
+  const busy = await setup();
+  busy.respond = () => json({}, 503, { 'retry-after': '120' });
+  await busy.app.start(CONFIG);
+  assert.match(busy.gladys.fake.connectionStatus.message.en, /service unavailable \(pause\)/);
+  await advance(busy, 3 * 60_000);
+  assert.match(busy.gladys.fake.connectionStatus.message.en, /\(service unavailable\)/);
+  assert.doesNotMatch(busy.gladys.fake.connectionStatus.message.en, /\(pause\)/);
+});
