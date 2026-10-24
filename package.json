@@ -1,6 +1,6 @@
 {
   "name": "gladys-trafikverket",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Trafikverket road weather for Gladys Assistant: air and road temperature, wind, precipitation, ice on the road of the road weather stations of the Swedish Transport Administration, read only through its official open API.",
   "type": "module",

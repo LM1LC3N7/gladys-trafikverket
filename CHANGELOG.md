@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-24
+
 ### Added
 
 - The road weather stations of Trafikverket (Sweden) in Gladys, read only
@@ -24,3 +26,6 @@ the notes of the version's GitHub Release.
 - A refused key stops the reads until the key changes or the test button
   succeeds; 429/5xx pause the reads (1 minute to 6 hours). The key is never
   logged nor written under `/data`.
+
+[Unreleased]: https://github.com/LM1LC3N7/gladys-trafikverket/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-trafikverket/releases/tag/v0.1.1
