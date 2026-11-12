@@ -95,7 +95,7 @@ test('the store basics', () => {
   assert.equal(manifest.manifest_version, 1);
   assert.equal(manifest.type, 'device');
   assert.deepEqual(manifest.transports, ['cloud']);
-  assert.match(manifest.gladys_version, />=5\.1\.0/);
+  assert.match(manifest.gladys_version, />=5\.3\.0/);
   assert.ok(manifest.categories.length >= 1 && manifest.categories.length <= 3);
   for (const lang of ['en', 'fr']) {
     const length = manifest.description[lang].length;
@@ -267,4 +267,13 @@ test('every feature uses a unit the core lists for its category; the fake Gladys
   }
   await gladys.connect();
   await gladys.publishDiscoveredDevices([device]);
+});
+
+test('the catalog countries: Sweden, which needs Gladys >= 5.3.0', () => {
+  assert.deepEqual(manifest.countries, ['SE']);
+  const [major, minor] = manifest.gladys_version
+    .match(/>=\s*(\d+)\.(\d+)/)
+    .slice(1)
+    .map(Number);
+  assert.ok(major > 5 || (major === 5 && minor >= 3), 'countries needs Gladys 5.3.0');
 });

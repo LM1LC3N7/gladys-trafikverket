@@ -45,7 +45,7 @@ sensors the station has:
 
 1. Create a free account on **data.trafikverket.se** and get an **API key**
    there.
-2. Install the integration from the Gladys catalog (Gladys 5.1 or newer).
+2. Install the integration from the Gladys catalog (Gladys 5.3 or newer).
 3. In the **Configuration** screen, paste the key and enter up to five
    stations: the name exactly as Trafikverket writes it on the map of its
    road weather stations ("Kungälv"), or the id of the station (it starts

@@ -47,7 +47,7 @@ capteurs dont la station dispose :
 
 1. Créez un compte gratuit sur **data.trafikverket.se** et obtenez-y une
    **clé d'API**.
-2. Installez l'intégration depuis le catalogue de Gladys (Gladys 5.1 ou
+2. Installez l'intégration depuis le catalogue de Gladys (Gladys 5.3 ou
    plus récent).
 3. Dans l'écran **Configuration**, collez la clé et saisissez jusqu'à cinq
    stations : le nom exactement comme Trafikverket l'écrit sur la carte de
