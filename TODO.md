@@ -2,7 +2,7 @@
 
 ## Before announcing
 
-- [ ] Test on a real Gladys 5.1+ with a real key of the open API: the
+- [ ] Test on a real Gladys 5.3+ with a real key of the open API: the
       device of the Discovery tab, its values, the status, the test button,
       a wrong key, a station name shared by several stations. Never done
       yet.
